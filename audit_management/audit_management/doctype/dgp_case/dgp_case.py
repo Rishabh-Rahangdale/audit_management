@@ -410,21 +410,50 @@ def send_to_all_reviewers(docname):
 
     return {"success": True, "message": _("Case successfully sent to all reviewers with TAT of {0} days").format(total_tat_days)}
 
+def get_target_stage_row(doc, user, stage_row_name=None):
+    """Find specific stage row for responding user or stage_row_name"""
+    if not getattr(doc, "dgp_case_stages", None):
+        return None
+
+    # 1. Match by row name if provided
+    if stage_row_name:
+        for row in doc.dgp_case_stages:
+            if row.name == stage_row_name:
+                return row
+
+    # 2. Match by logged-in user_id or email with Pending/Sent/Draft status
+    for row in doc.dgp_case_stages:
+        if (row.user_id == user or row.email == user) and row.status in ["Pending", "Sent", "Draft"]:
+            return row
+
+    # 3. Fallback: Match by logged-in user_id or email regardless of status
+    for row in doc.dgp_case_stages:
+        if row.user_id == user or row.email == user:
+            return row
+
+    # 4. Fallback for Administrator / Audit Manager: return current stage row if valid
+    is_admin = user == "Administrator" or "System Manager" in frappe.get_roles(user) or "Audit Manager" in frappe.get_roles(user)
+    if is_admin and 1 <= doc.current_stage <= len(doc.dgp_case_stages):
+        return doc.dgp_case_stages[doc.current_stage - 1]
+
+    return None
+
 # Submit response for active stage reviewer
 @frappe.whitelist()
-def submit_stage_response(docname, response, attachment=None):
-    """Submit response for active stage reviewer"""
+def submit_stage_response(docname, response, attachment=None, stage_row_name=None):
+    """Submit response for specific stage reviewer"""
     doc = frappe.get_doc("DGP Case", docname)
 
     if doc.status in ["Closed", "Cessation"]:
         frappe.throw(_("Case is already closed"))
 
-    if doc.current_stage < 1 or doc.current_stage > len(doc.dgp_case_stages):
-        frappe.throw(_("Invalid current stage"))
+    user = frappe.session.user
+    target_row = get_target_stage_row(doc, user, stage_row_name)
 
-    current_row = doc.dgp_case_stages[doc.current_stage - 1]
+    if not target_row:
+        frappe.throw(_("No valid stage review assignment found for user {0}").format(user))
 
-    current_row.response = response
+    target_row.response = response
     if attachment:
         # Force uploaded file to be public (is_private = 0) for seamless access
         file_name = frappe.db.get_value("File", {"file_url": attachment}, "name")
@@ -439,52 +468,65 @@ def submit_stage_response(docname, response, attachment=None):
                 file_doc.save(ignore_permissions=True)
                 attachment = file_doc.file_url
 
-        current_row.attachment = attachment
+        target_row.attachment = attachment
 
-    current_row.status = "Responded"
-    current_row.response_time = now_datetime()
+    target_row.status = "Responded"
+    target_row.response_time = now_datetime()
 
     doc.save()
 
-    reviewer_name = current_row.employee_name or current_row.employee
-    dc_title = current_row.dc_level or current_row.stage_name
+    # Close open ToDo for this specific reviewer
+    if target_row.user_id:
+        existing_todos = frappe.get_all("ToDo", filters={
+            "reference_type": "DGP Case",
+            "reference_name": doc.name,
+            "allocated_to": target_row.user_id,
+            "status": "Open"
+        })
+        for todo in existing_todos:
+            frappe.db.set_value("ToDo", todo.name, "status", "Closed")
+
+    reviewer_name = target_row.employee_name or target_row.employee or target_row.user_id
+    dc_title = target_row.dc_level or target_row.stage_name
     return {"success": True, "message": _("Response successfully submitted by {0} ({1})").format(reviewer_name, dc_title)}
 
 # Send back the case to the creator for clarification or further action
 @frappe.whitelist()
-def send_back_case(docname, remark):
+def send_back_case(docname, remark, stage_row_name=None):
     """Send back the case to the creator for clarification or further action"""
     doc = frappe.get_doc("DGP Case", docname)
 
     if doc.status in ["Closed", "Cessation"]:
         frappe.throw(_("Case is already closed"))
 
-    if doc.current_stage < 1 or doc.current_stage > len(doc.dgp_case_stages):
-        frappe.throw(_("Invalid current stage"))
+    user = frappe.session.user
+    target_row = get_target_stage_row(doc, user, stage_row_name)
 
-    current_row = doc.dgp_case_stages[doc.current_stage - 1]
+    if not target_row:
+        frappe.throw(_("No valid stage review assignment found for user {0}").format(user))
 
     # Save the remark and mark the stage as Sent Back
-    current_row.response = f"Sent Back Remark: {remark}"
-    current_row.status = "Sent Back"
-    current_row.response_time = now_datetime()
+    target_row.response = f"Sent Back Remark: {remark}"
+    target_row.status = "Sent Back"
+    target_row.response_time = now_datetime()
 
     # Revert main document to Draft so creator can edit
     doc.status = "Draft"
     doc.save()
 
     # Close existing open ToDo for this stage reviewer
-    existing_todos = frappe.get_all("ToDo", filters={
-        "reference_type": "DGP Case",
-        "reference_name": doc.name,
-        "allocated_to": current_row.user_id,
-        "status": "Open"
-    })
-    for todo in existing_todos:
-        frappe.db.set_value("ToDo", todo.name, "status", "Closed")
+    if target_row.user_id:
+        existing_todos = frappe.get_all("ToDo", filters={
+            "reference_type": "DGP Case",
+            "reference_name": doc.name,
+            "allocated_to": target_row.user_id,
+            "status": "Open"
+        })
+        for todo in existing_todos:
+            frappe.db.set_value("ToDo", todo.name, "status", "Closed")
 
-    reviewer_name = current_row.employee_name or current_row.employee
-    dc_title = current_row.dc_level or current_row.stage_name
+    reviewer_name = target_row.employee_name or target_row.employee or target_row.user_id
+    dc_title = target_row.dc_level or target_row.stage_name
     return {"success": True, "message": _("Case sent back to creator by {0} ({1})").format(reviewer_name, dc_title)}
 
 # Fetch DGP cases accessible by user for interactive dashboard table filtering

@@ -661,6 +661,7 @@ frappe.ui.form.on('DGP Case', {
 
     // Prompt for remark and send case back to creator
     send_back_case: function(frm) {
+        let user_stage = frm.doc.dgp_case_stages ? frm.doc.dgp_case_stages.find(s => s.user_id === frappe.session.user || s.email === frappe.session.user) : null;
         frappe.prompt(
             [
                 {
@@ -675,7 +676,8 @@ frappe.ui.form.on('DGP Case', {
                     method: 'audit_management.audit_management.doctype.dgp_case.dgp_case.send_back_case',
                     args: {
                         docname: frm.doc.name,
-                        remark: values.remark
+                        remark: values.remark,
+                        stage_row_name: user_stage ? user_stage.name : null
                     },
                     freeze: true,
                     freeze_message: __('Sending back case...'),
@@ -698,6 +700,7 @@ frappe.ui.form.on('DGP Case', {
     // Submit stage review response with supporting attachments
     submit_stage_response: function(frm) {
         let uploaded_files = []; // Array of { name: '...', url: '...' }
+        let user_stage = frm.doc.dgp_case_stages ? frm.doc.dgp_case_stages.find(s => s.user_id === frappe.session.user || s.email === frappe.session.user) : null;
 
         const d = new frappe.ui.Dialog({
             title: __('Submit Review Response'),
@@ -723,7 +726,8 @@ frappe.ui.form.on('DGP Case', {
                     args: {
                         docname: frm.doc.name,
                         response: values.response,
-                        attachment: attachment_urls
+                        attachment: attachment_urls,
+                        stage_row_name: user_stage ? user_stage.name : null
                     },
                     freeze: true,
                     freeze_message: __('Submitting stage review response...'),
