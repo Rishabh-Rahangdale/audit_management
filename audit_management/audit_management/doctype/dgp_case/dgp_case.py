@@ -6,11 +6,20 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime, add_days, getdate
 
+# Set of specific Employee IDs allowed for testing/restricted access to DGP module
 ALLOWED_DGP_EMP_IDS = {"447", "5005", "2570", "1754", "8751"}
 
 @frappe.whitelist()
 def is_dgp_module_enabled(user=None):
-    """Check if DGP module is enabled in Audit Management Settings and restricted to specific test Employee IDs"""
+    """
+    Check if DGP module is enabled in Audit Management Settings and restricted to specific test Employee IDs.
+    
+    NOTE TO REVERT TO NORMAL ROLE-BASED ACCESS:
+    To restore normal role-based access for all users when 'enable_dgp_module' checkbox is checked,
+    simply remove the ALLOWED_DGP_EMP_IDS check logic below and return 1 whenever 'val' is truthy:
+        val = frappe.db.get_single_value("Audit Management Settings", "enable_dgp_module")
+        return 1 if val else 0
+    """
     val = frappe.db.get_single_value("Audit Management Settings", "enable_dgp_module")
     if not val:
         return 0
@@ -24,7 +33,7 @@ def is_dgp_module_enabled(user=None):
     if user == "Administrator":
         return 1
 
-    # Check if user matches allowed Employee ID, user_id, or company_email
+    # Check if user matches allowed Employee ID, user_id, or company_email prefix
     user_str = str(user).strip()
     user_name_prefix = user_str.split("@")[0]
 
