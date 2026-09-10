@@ -6,15 +6,63 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime, add_days, getdate
 
-def is_dgp_module_enabled():
-    """Check if DGP module is enabled in Audit Management Settings"""
+ALLOWED_DGP_EMP_IDS = {"447", "5005", "2570", "1754", "8751"}
+
+@frappe.whitelist()
+def is_dgp_module_enabled(user=None):
+    """Check if DGP module is enabled in Audit Management Settings and restricted to specific test Employee IDs"""
     val = frappe.db.get_single_value("Audit Management Settings", "enable_dgp_module")
-    return val if val is not None else 1
+    if not val:
+        return 0
+
+    if not user:
+        user = frappe.session.user
+
+    if not user or user == "Guest":
+        return 0
+
+    if user == "Administrator":
+        return 1
+
+    # Check if user matches allowed Employee ID, user_id, or company_email
+    user_str = str(user).strip()
+    user_name_prefix = user_str.split("@")[0]
+
+    if user_str in ALLOWED_DGP_EMP_IDS or user_name_prefix in ALLOWED_DGP_EMP_IDS:
+        return 1
+
+    emp = frappe.db.get_value(
+        "Employee",
+        {"user_id": user},
+        ["name", "company_email", "prefered_email"],
+        as_dict=True
+    )
+    if not emp:
+        # Check if user is employee name directly
+        emp = frappe.db.get_value(
+            "Employee",
+            {"name": user},
+            ["name", "company_email", "prefered_email"],
+            as_dict=True
+        )
+
+    if emp:
+        emp_name = str(emp.name).strip()
+        emp_clean = emp_name.replace("HR-EMP-", "").replace("EMP-", "").strip()
+        if emp_name in ALLOWED_DGP_EMP_IDS or emp_clean in ALLOWED_DGP_EMP_IDS:
+            return 1
+
+    return 0
+
+@frappe.whitelist()
+def check_dgp_access():
+    """Return whether current user has DGP module access"""
+    return {"enabled": bool(is_dgp_module_enabled())}
 
 def boot_session(bootinfo):
-    """Filter out DGP DocTypes from bootinfo when DGP module is disabled for non-Administrator users"""
+    """Filter out DGP DocTypes from bootinfo when DGP module is disabled or user is not in allowed test IDs"""
     user = frappe.session.user
-    if user != "Administrator" and not is_dgp_module_enabled():
+    if user != "Administrator" and not is_dgp_module_enabled(user):
         dgp_doctypes = {"DGP Case", "DGP Stage", "DGP Stage Assignment", "DGP Additional Accused"}
         if hasattr(bootinfo, "user") and isinstance(bootinfo.user, dict):
             for key in ["can_read", "can_create", "can_write", "can_search", "can_get_doctypes", "single_doctypes"]:
@@ -34,7 +82,7 @@ class DGPCase(Document):
     # Validation to prevent attachment removal by stage users and check module status
     def validate(self):
         user = frappe.session.user
-        if user != "Administrator" and not is_dgp_module_enabled():
+        if user != "Administrator" and not is_dgp_module_enabled(user):
             frappe.throw(_("DGP Module is currently disabled in Audit Management Settings."))
         self.validate_attachment_removal()
 
@@ -533,11 +581,8 @@ def send_back_case(docname, remark, stage_row_name=None):
 @frappe.whitelist()
 def get_user_dgp_cases(filter_type=None):
     """Fetch DGP cases accessible by user for interactive dashboard table filtering"""
-    if not is_dgp_module_enabled():
-        return []
-
     user = frappe.session.user
-    if not user or user == "Guest":
+    if not user or user == "Guest" or not is_dgp_module_enabled(user):
         return []
 
     is_admin_or_manager = user == "Administrator" or \
@@ -573,12 +618,9 @@ def get_user_dgp_cases(filter_type=None):
 @frappe.whitelist()
 def get_dgp_dashboard_data():
     """Return dashboard analytics for DGP Cases tailored for Case Creators, Admins & Stage Reviewers"""
-    if not is_dgp_module_enabled():
-        return {"enabled": False, "total_count": 0, "draft_count": 0, "under_review_count": 0, "closed_count": 0}
-
     user = frappe.session.user
-    if not user or user == "Guest":
-        return {}
+    if not user or user == "Guest" or not is_dgp_module_enabled(user):
+        return {"enabled": False, "total_count": 0, "draft_count": 0, "under_review_count": 0, "closed_count": 0}
 
     user_roles = frappe.get_roles(user)
     is_admin_or_manager = user == "Administrator" or \
@@ -641,7 +683,7 @@ def get_permission_query_conditions(user=None):
     if not user:
         user = frappe.session.user
 
-    if user != "Administrator" and not is_dgp_module_enabled():
+    if user != "Administrator" and not is_dgp_module_enabled(user):
         return "1=0"
 
     user_roles = frappe.get_roles(user)
@@ -670,7 +712,7 @@ def has_permission(doc, ptype="read", user=None):
     if not user:
         user = frappe.session.user
 
-    if user != "Administrator" and not is_dgp_module_enabled():
+    if user != "Administrator" and not is_dgp_module_enabled(user):
         return False
 
     user_roles = frappe.get_roles(user)
