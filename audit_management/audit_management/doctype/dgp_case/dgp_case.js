@@ -928,16 +928,9 @@ frappe.ui.form.on('DGP Case', {
         const stages = frm.doc.dgp_case_stages;
         const current_stage = frm.doc.current_stage || 1;
 
-        let hasAnySentStage = stages.some(s => s.status && s.status !== 'Not Sent');
-        let currentBadgeHtml = '';
-        if (hasAnySentStage && frm.doc.status !== 'Draft') {
-            currentBadgeHtml = `<span class="badge badge-info" style="font-size: 10px; font-weight: 600;">Current Stage: ${frm.doc.current_dc_level || 'Stage ' + current_stage}</span>`;
-        }
-
         let html = '<div class="dgp-stage-tracker-container">';
         html += '<div class="dgp-tracker-header">';
         html += '<span><i class="fa fa-tasks mr-1"></i> Stage Tracker</span>';
-        html += currentBadgeHtml;
         html += '</div>';
 
         html += '<div class="dgp-tracker-flow">';
