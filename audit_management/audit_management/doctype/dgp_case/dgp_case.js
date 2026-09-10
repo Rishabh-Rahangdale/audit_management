@@ -174,8 +174,49 @@ frappe.ui.form.on('DGP Case', {
             }
         }
 
-        // Highlight TAT breach
-        if (frm.doc.tat_deadline && frm.doc.status !== 'Closed' && frm.doc.status !== 'Cessation') {
+        // Highlight TAT breach or Late Reviewer Responses
+        let late_responses = [];
+        if (frm.doc.dgp_case_stages && frm.doc.dgp_case_stages.length > 0) {
+            frm.doc.dgp_case_stages.forEach(stg => {
+                if (stg.status === 'Responded' && stg.response_time && stg.tat_deadline) {
+                    const resp_dt = frappe.datetime.str_to_obj(stg.response_time);
+                    const tat_dt = frappe.datetime.str_to_obj(stg.tat_deadline);
+                    if (resp_dt && tat_dt && resp_dt > tat_dt) {
+                        const diffMs = resp_dt - tat_dt;
+                        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+                        if (diffDays > 0) {
+                            late_responses.push({
+                                stage_name: stg.stage_name || stg.dc_level || `Stage ${stg.stage}`,
+                                employee_name: stg.employee_name || stg.employee || stg.user_id,
+                                response_time: stg.response_time,
+                                tat_deadline: stg.tat_deadline,
+                                diffDays: diffDays
+                            });
+                        }
+                    }
+                }
+            });
+        }
+
+        if (late_responses.length > 0) {
+            const late_info = late_responses.map(l => 
+                `<b>${l.employee_name} (${l.stage_name})</b> replied <b>${l.diffDays} day(s) LATE</b> (after TAT Deadline: ${frappe.datetime.str_to_user(l.tat_deadline)})`
+            ).join('<br>');
+
+            frm.dashboard.set_headline_alert(
+                `<i class="fa fa-exclamation-triangle mr-1"></i> <b>TAT Breach Notice:</b> ${late_info}`,
+                'orange'
+            );
+
+            if (!frm.doc._late_response_alert_shown) {
+                frm.doc._late_response_alert_shown = true;
+                frappe.msgprint({
+                    title: __('⚠️ TAT Breach Notice'),
+                    indicator: 'orange',
+                    message: __('Reviewer(s) responded after breaching TAT deadline:<br><br>{0}').format(late_info)
+                });
+            }
+        } else if (frm.doc.tat_deadline && frm.doc.status !== 'Closed' && frm.doc.status !== 'Cessation') {
             const deadline = frappe.datetime.str_to_obj(frm.doc.tat_deadline);
             const now = new Date();
             if (deadline < now) {
@@ -913,16 +954,34 @@ frappe.ui.form.on('DGP Case', {
                 }
             }
 
+            let isLateResponded = false;
+            let lateDaysBreached = 0;
+            if (stg.status === 'Responded' && stg.response_time && stg.tat_deadline) {
+                const resp_dt = frappe.datetime.str_to_obj(stg.response_time);
+                const tat_dt = frappe.datetime.str_to_obj(stg.tat_deadline);
+                if (resp_dt && tat_dt && resp_dt > tat_dt) {
+                    isLateResponded = true;
+                    lateDaysBreached = Math.ceil((resp_dt - tat_dt) / (1000 * 60 * 60 * 24));
+                }
+            }
+
             let pillClass = '';
             let connClass = '';
             let statusText = stg.status || 'Not Sent';
             let statusTextClass = 'dgp-status-pending';
 
             if (stg.status === 'Responded') {
-                pillClass = 'dgp-pill-responded';
-                connClass = 'dgp-conn-completed';
-                statusText = '✓ Responded';
-                statusTextClass = 'dgp-status-responded';
+                if (isLateResponded && lateDaysBreached > 0) {
+                    pillClass = 'dgp-pill-escalated';
+                    connClass = 'dgp-conn-completed';
+                    statusText = `⚠️ Responded (${lateDaysBreached}d Late)`;
+                    statusTextClass = 'dgp-status-escalated';
+                } else {
+                    pillClass = 'dgp-pill-responded';
+                    connClass = 'dgp-conn-completed';
+                    statusText = '✓ Responded';
+                    statusTextClass = 'dgp-status-responded';
+                }
             } else if (stg.status === 'No Responded') {
                 pillClass = 'dgp-pill-escalated';
                 connClass = 'dgp-conn-escalated';
@@ -953,7 +1012,11 @@ frappe.ui.form.on('DGP Case', {
                     let diffMs = deadlineObj - now;
                     let diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
                     if (stg.status === 'Responded') {
-                        remainingDaysInfo = '✓ Completed';
+                        if (isLateResponded && lateDaysBreached > 0) {
+                            remainingDaysInfo = `⚠️ Responded ${lateDaysBreached}d After TAT`;
+                        } else {
+                            remainingDaysInfo = '✓ Completed in TAT';
+                        }
                     } else if (stg.status === 'No Responded') {
                         remainingDaysInfo = '⨂ No Response in TAT';
                     } else if (diffDays < 0 || stg.status === 'Overdue' || isOverdue) {
