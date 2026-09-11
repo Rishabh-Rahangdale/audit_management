@@ -94,9 +94,23 @@ class DGPCase(Document):
         if user != "Administrator" and not is_dgp_module_enabled(user):
             frappe.throw(_("DGP Module is currently disabled in Audit Management Settings."))
         self.validate_attachment_removal()
+        self.validate_duplicate_stage_employees()
 
-
-    #self.validate_final_decision_justification()
+    def validate_duplicate_stage_employees(self):
+        """Prevent assigning the same employee to multiple stages in dgp_case_stages"""
+        seen_employees = {}
+        for row in (self.dgp_case_stages or []):
+            if row.reviewer_employee:
+                emp_code = str(row.reviewer_employee).strip()
+                if emp_code in seen_employees:
+                    first_stage = seen_employees[emp_code]
+                    curr_stage = row.stage or row.idx
+                    emp_display = getattr(row, "employee_name", None) or emp_code
+                    frappe.throw(
+                        _("Employee {0} ({1}) is assigned to multiple stages (Stage {2} and Stage {3}). An employee cannot be assigned to more than one stage.")
+                        .format(frappe.bold(emp_display), emp_code, first_stage, curr_stage)
+                    )
+                seen_employees[emp_code] = row.stage or row.idx
     def validate_attachment_removal(self):
         if self.is_new():
             return
