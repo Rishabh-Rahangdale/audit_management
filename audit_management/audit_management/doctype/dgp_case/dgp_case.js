@@ -305,6 +305,22 @@ frappe.ui.form.on('DGP Case', {
         if (frm.doc.cmg_code && !frm.doc.tat_deadline) {
             frm.events.set_tat_deadline(frm);
         }
+
+        // Validate duplicate stage reviewer employees
+        if (frm.doc.dgp_case_stages && frm.doc.dgp_case_stages.length > 0) {
+            const seen = {};
+            for (let row of frm.doc.dgp_case_stages) {
+                if (row.reviewer_employee) {
+                    const emp = String(row.reviewer_employee).trim();
+                    if (seen[emp]) {
+                        frappe.msgprint(__("Employee <b>{0}</b> is assigned to multiple stages (Stage {1} and Stage {2}). An employee cannot be assigned to more than one stage.", [row.employee_name || emp, seen[emp], row.stage || row.idx]));
+                        frappe.validated = false;
+                        return false;
+                    }
+                    seen[emp] = row.stage || row.idx;
+                }
+            }
+        }
     },
 
     // Triggers dynamic filtering of Severity options when Misconduct Type changes
@@ -1111,6 +1127,15 @@ frappe.ui.form.on('DGP Case Stage', {
         const row = locals[cdt][cdn];
         const emp_id = row.reviewer_employee;
         if (emp_id) {
+            if (frm.doc.dgp_case_stages) {
+                for (let other_row of frm.doc.dgp_case_stages) {
+                    if (other_row.name !== row.name && other_row.reviewer_employee && String(other_row.reviewer_employee).trim() === String(emp_id).trim()) {
+                        frappe.msgprint(__("Employee <b>{0}</b> is already assigned to Stage {1}. Duplicate employee assignment is not allowed.", [emp_id, other_row.stage || other_row.idx]));
+                        frappe.model.set_value(cdt, cdn, 'reviewer_employee', '');
+                        return;
+                    }
+                }
+            }
             frappe.db.get_value('Employee', emp_id, ['employee_name', 'designation', 'user_id', 'company_email', 'prefered_email'], (r) => {
                 if (r) {
                     frappe.model.set_value(cdt, cdn, 'employee_name', r.employee_name || '');
